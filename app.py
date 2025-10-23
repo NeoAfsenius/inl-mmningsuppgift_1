@@ -1,56 +1,71 @@
-
-from flask import Flask, request, render_template, redirect, url_for, flash, send_from_directory
-import os
-from werkzeug.utils import secure_filename
-
-UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif'}
+from flask import Flask, render_template, request, session
+import mysql.connector
+from mysql.connector import Error
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER  # Sätter uppladdningsmappen i Flask-konfigurationen så den kan användas i hela appen och av tillägg
-app.secret_key = 'supersecretkey'
+app.secret_key = 'your_secret_key_here'  # TODO: Ändra detta till en slumpmässig hemlig nyckel
 
-def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+# Databaskonfiguration
+DB_CONFIG = {
+    'host': 'localhost',
+    'user': 'root',  # Ändra detta till ditt MySQL-användarnamn
+    'password': '',  # Ändra detta till ditt MySQL-lösenord
+    'database': 'inlämmning_1'  # TODO: Ändra detta till ditt databasnamn
+}
 
-@app.route('/', methods=['GET', 'POST'])
-def upload_file():
-    if request.method == 'POST':  # Kontrollerar om formuläret skickades med POST
-        if 'the_file' not in request.files:
-            flash('No file part')
-            return redirect(request.url)
+def get_db_connection():
+    """Skapa och returnera en databasanslutning"""
+    try:
+        connection = mysql.connector.connect(**DB_CONFIG)
+        return connection
+    except Error as e:
+        print(f"Fel vid anslutning till MySQL: {e}")
+        return None
+
+@app.route('/')
+def index():
+    return render_template('login.html')
+
+@app.route('/login', methods=['POST'])
+def login():
+    # hantera POST request från inloggningsformuläret
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
         
-        file = request.files['the_file']
-
-        if file.filename == '':
-            flash('No selected file')
-            return redirect(request.url)
+        # Anslut till databasen
+        connection = get_db_connection()
+        if connection is None:
+            return "Databasanslutning misslyckades", 500
         
-        if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename) # Rensar filnamnet för att förhindra katalogtraverseringsattacker
-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))  # Sparar filen i uppladdningsmappen
-            flash('File successfully uploaded')
-            return redirect(url_for('upload_file'))
-        else:
-            flash('File type not allowed')
-            return redirect(request.url)
-    # Denna mall visas för GET-requests och efter lyckad uppladdning
-    return render_template('upload.html')
+        try:
+            cursor = connection.cursor(dictionary=True)
+            
+            # Fråga för att kontrollera om användare finns med matchande användarnamn
+            query = "SELECT * FROM users WHERE username = %s"
+            
+            cursor.execute(query, (username,))  # Execute query with parameter
+            result = cursor.fetchone()
+            # lägg resultatet i variabeln user nedan.
+            user = result #: ska få värdet som är raden i databasen som returneras av query ovan.
+            
+            # Kontrollera om användaren fanns i databasen och lösenordet är korrekt.
+            # Om lösenordet är korrekt så sätt sessionsvariabler och skicka tillbaka en hälsning med användarens namn.
+            # Om lösenordet inte är korrekt skicka tillbaka ett felmeddelande med http-status 401.
+            if user and user["password"] == password:
+                session['username'] = user['username']
+                return f'Inloggning lyckades! Välkommen {username}!'
+            else:
+                return ('Ogiltigt användarnamn eller lösenord', 401)
 
-@app.route('/uploads')
-def list_uploads():
-    files = []
-    if os.path.exists(UPLOAD_FOLDER):
-        for f in os.listdir(UPLOAD_FOLDER):
-            if os.path.isfile(os.path.join(UPLOAD_FOLDER, f)) and f != '.gitkeep':
-                files.append(f)
-    return render_template('list_uploads.html', files=files)
-
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+        except Error as e:
+            print(f"Databasfel: {e}")
+            return "Databasfel inträffade", 500
+        
+        finally:
+            if connection.is_connected():
+                cursor.close()
+                connection.close()
 
 if __name__ == '__main__':
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     app.run(debug=True)
