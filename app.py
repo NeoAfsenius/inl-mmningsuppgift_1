@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, session
 import mysql.connector
 from mysql.connector import Error
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'  # TODO: Ändra detta till en slumpmässig hemlig nyckel
@@ -22,8 +23,31 @@ def get_db_connection():
         print(f"Fel vid anslutning till MySQL: {e}")
         return None
 
+@app.route("/hash")
+def hash():
+    return generate_password_hash(request.args.get("password"), salt_length=100)
+
+@app.errorhandler(404)
+def page_not_found(error):
+    app.logger.warning('404 error encountered')
+    return render_template('404.html'), 404
+
 @app.route('/')
 def index():
+    if 'username' in session:
+        username = session['username']
+        return render_template('home.html', username=username)
+    return render_template('login.html')
+
+
+@app.route("/home", methods=['POST'])
+def home():
+    username = session['username']
+    return f'Välkommen tillbaka, {username}!'
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.pop('username', None)
     return render_template('login.html')
 
 @app.route('/login', methods=['POST'])
@@ -52,9 +76,9 @@ def login():
             # Kontrollera om användaren fanns i databasen och lösenordet är korrekt.
             # Om lösenordet är korrekt så sätt sessionsvariabler och skicka tillbaka en hälsning med användarens namn.
             # Om lösenordet inte är korrekt skicka tillbaka ett felmeddelande med http-status 401.
-            if user and user["password"] == password:
+            if user and check_password_hash(user['password'], password):
                 session['username'] = user['username']
-                return f'Inloggning lyckades! Välkommen {username}!'
+                return render_template("home.html", username=user['username'])
             else:
                 return ('Ogiltigt användarnamn eller lösenord', 401)
 
